@@ -78,6 +78,7 @@ interact with the environment.
     * [Freezing a value](#freezing-a-value)
     * [Hashing](#hashing)
     * [Collection types](#collection-types)
+    * [Iteration](#iteration)
     * [Indexing](#indexing)
   * [Expressions](#expressions)
     * [Identifiers](#identifiers)
@@ -102,7 +103,7 @@ interact with the environment.
     * [Return statements](#return-statements)
     * [Expression statements](#expression-statements)
     * [If statements](#if-statements)
-    * [For loops](#for-loops)
+    * [For statements](#for-statements)
     * [Break and Continue](#break-and-continue)
     * [Load statements](#load-statements)
   * [Module execution](#module-execution)
@@ -440,7 +441,7 @@ len("界")               # 3 (UTF-8) or 1 (UTF-16)
 len("😀")               # 4 (UTF-8) or 2 (UTF-16)
 ```
 
-Although string values may be capable of representing any sequence elements,
+Although string values may be capable of representing any sequence of elements,
 string  _literals_ can denote only sequences of UTF-K code
 units that are valid encodings of text.
 (Any literal syntax capable of representing arbitrary element sequences
@@ -544,9 +545,9 @@ int                          # a signed integer of arbitrary magnitude
 float                        # an IEEE 754 double-precision floating-point number
 string                       # a text string, with Unicode encoded as UTF-8 or UTF-16
 bytes                        # a byte string
-list                         # a fixed-length sequence of values
-tuple                        # a fixed-length sequence of values, unmodifiable
-dict                         # a mapping from values to values
+list                         # a sequence of values, usually homogeneous in nature
+tuple                        # an unmodifiable sequence of values
+dict                         # an associative mapping from keys to values
 set                          # a collection of unique values
 function                     # a function
 ```
@@ -558,17 +559,10 @@ which the interpreter is embedded, and those data types may
 participate in basic operations of the language such as arithmetic,
 comparison, indexing, and function calls.
 
-<!-- We needn't mention the stringIterable type here. -->
-
-Some operations can be applied to any Starlark value.  For example,
-every value has a type string that can be obtained with the expression
-`type(x)`, and any value may be converted to a string using the
-expression `str(x)`, or to a Boolean truth value using the expression
-`bool(x)`.  Other operations apply only to certain types.  For
-example, the indexing operation `a[i]` works only with strings, bytes values, lists,
-and tuples, and any application-defined sequences.
-The [_value concepts_](#value-concepts) section explains the groupings of
-types by the operators they support.
+Some operations, like `bool(x)` or `str(x)`, can be applied to any Starlark
+value, while others, like integer indexing `a[i]`, apply only to certain types.
+The [_value concepts_](#value-concepts) section explains the groupings of types
+by the operators they support.
 
 
 ### None
@@ -585,28 +579,36 @@ The truth value of `None` is `False`.
 There are two Boolean values, `True` and `False`, representing the
 truth or falsehood of a predicate.  The [type](#type) of a Boolean is `"bool"`.
 
-Boolean values are typically used as conditions in `if`-statements,
-although any Starlark value used as a condition is implicitly
-interpreted as a Boolean.
-For example, the values `None`, `0`, and the empty sequences
-`""`, `()`, `[]`, and `{}` have a truth value of `False`, whereas non-zero
-numbers and non-empty sequences have a truth value of `True`.
+Boolean values are typically used as conditions in `if` statements,
+although any Starlark value may be used in this way.
+Aside from `False` itself, the following core language values are
+considered false in a condition:
+* `None`
+* numerical 0 (`0`, `0.0` and `-0.0`)
+* the empty string (`""`) and empty bytes (`b""`)
+* the empty collections `[]`, `()`, `{}`, and `set()`
+
+All other core language values are considered true.
 Application-defined types determine their own truth value.
+
 Any value may be explicitly converted to a Boolean using the built-in `bool`
 function.
 
-```python
-1 + 1 == 2                              # True
-2 + 2 == 5                              # False
-
-if 1 + 1:
-        print("True")
-else:
-        print("False")
-```
-
 True and False may be converted to the values 1 and 0 using the `int` function,
-but Booleans are not numbers.
+but Booleans are not numbers. Testing a non-Boolean value for equality to a
+Boolean using `==` returns `False`, regardless of whether they have the same
+truth value.
+
+```python
+"A" if 1 + 1 else "B"                   # "A"
+"A" if 0.0 else "B"                     # "B"
+
+if not mylist:
+    empty = True
+
+1 == True                               # False
+bool(1) == True                         # True
+```
 
 ### Integers
 
@@ -753,7 +755,7 @@ float(3) / 2                                    # 1.5
 
 ### Strings
 
-A string is an immutable sequence of elements that encode Unicode text.
+A string is an immutable array of elements that encode Unicode text.
 The [type](#type) of a string is `"string"`.
 
 For reasons of efficiency and interoperability with the host language,
@@ -765,7 +767,7 @@ whereas in the Java implementation,
 string elements are 16-bit values (Java `char`s) and Unicode text is encoded as UTF-16.
 
 An implementation may permit strings to hold arbitrary values of the element type,
-including sequences that do not denote encode valid Unicode text;
+including sequences that do not encode valid Unicode text;
 or, it may disallow invalid sequences, and operations that would form them.
 
 The built-in `len` function returns the number of elements in a string.
@@ -785,10 +787,14 @@ compared using operators such as `==` and `<`.
 (Beware that the UTF-16 string encoding is not order-preserving
 with respect to code point values.)
 
-Strings are _not_ iterable sequences, so they cannot be used as the operand of
-a `for`-loop, list comprehension, or any other operation than requires
-an iterable sequence. One must explicitly call a method of a string value
-to obtain an iterable view.
+Strings are _not_ iterable, so they cannot be used as the operand of a `for`
+loop or of methods that expect iterables (such as the `list()` constructor).
+One must instead explicitly call a method of a string value to obtain an
+iterable view of its elements. Because strings are not iterable, they are not
+considered to be subtypes of `Collection` or `Sequence`. (Starlark deviates
+from Python here to avoid a common pitfall in which a single string is
+mistakenly used where a list of strings was intended, resulting in exploding
+the string into its individual characters.)
 
 Any value may formatted as a string using the `str` or `repr` built-in
 functions, the `str % tuple` operator, or the `str.format` method.
@@ -834,7 +840,7 @@ Strings have several built-in methods:
 
 ### Bytes
 
-A _bytes_ is an immutable sequence of values in the range 0-255.
+A _bytes_ is an immutable array of integers in the range 0-255.
 The [type](#type) of a bytes is `"bytes"`.
 
 Unlike a string, which is intended for text, a bytes may represent binary data,
@@ -854,8 +860,9 @@ instead another bytes value, the comparison tests whether `x` is contained as
 a consecutive subsequence of `b` (analogous to substrings of a string).
 It is an error if `x` is an out-of-range integer, or any other type of value.
 
-Like strings, bytes values are hashable, totally ordered, and not iterable,
-and are considered True if they are non-empty.
+Like strings, bytes values are hashable, totally ordered, and considered True
+if they are non-empty. They are not iterable, and not a subtype of
+`Collection` nor `Sequence`.
 
 A bytes value has these methods:
 
@@ -877,9 +884,10 @@ TODO: string.elems(), string.elem_ords(), string.codepoint_ords()
 A list is a mutable sequence of values.
 The [type](#type) of a list is `"list"`.
 
-Lists are sequences: the elements of a list may be indexed by an integer,
-iterated over by `for`-loops, list comprehensions, and various built-in
-functions.
+Lists are a subtype of `Sequence`. The number of elements may be retrieved with
+the built-in `len()` function. Lists can be [indexed](#subscript-expressions)
+to retrieve a single element, and [sliced](#slice-expressions) to produce a new
+list. Lists can be iterated over by `for` loops.
 
 List may be constructed using bracketed list notation:
 
@@ -889,12 +897,8 @@ List may be constructed using bracketed list notation:
 [1, 2]          # a 2-element list
 ```
 
-Lists can also be constructed from any iterable sequence by using the
-built-in `list` function.
-
-The built-in `len` function applied to a list returns the number of elements.
-Lists can be [indexed](#subscript-expressions) to retrieve a single element,
-and [sliced](#slice-expressions) to produce a new list.
+Lists can also be constructed from any iterable by using the built-in `list`
+function.
 
 List elements may be added using the `append` or `extend` methods,
 removed using the `remove` method, or reordered by assignments such as
@@ -937,6 +941,10 @@ A list value has these methods:
 A tuple is an immutable sequence of values.
 The [type](#type) of a tuple is `"tuple"`.
 
+Like lists, tuple is a subtype of `Sequence`, and supports the same `len()`,
+indexing, slicing, and iteration operations. A slice of a tuple returns
+another tuple.
+
 Tuples are constructed using parenthesized list notation:
 
 ```python
@@ -962,25 +970,19 @@ sorted(3, 1, 4, 1,)                             # ok
 {1: 2, 3:4, }                                   # ok
 ```
 
-Any iterable sequence may be converted to a tuple by using the
-built-in `tuple` function.
-
-Like lists, tuples may be [indexed](#subscript-expressions) and
-[sliced](#slice-expressions) to retrieve an element or produce a new tuple.
-
-Tuples are iterable sequences, so they may be used as the operand of a
-`for`-loop, a list comprehension, or various built-in functions.
+Tuples can be constructed from any iterable by using the built-in `tuple`
+function.
 
 Unlike lists, tuples cannot be modified.
 However, the mutable elements of a tuple may be modified.
 
-Tuples are hashable (assuming their elements are hashable),
-so they may be used as keys of a dictionary.
+Tuples are hashable if their elements are hashable, in which case they
+may be used as keys of a dictionary.
 
-Tuples may be concatenated using the `+` operator.
+Tuples may be concatenated using the `+` operator. Note that it is not legal
+to directly concatenate a tuple with a list.
 
-A tuple used in a Boolean context is considered true if it is
-non-empty.
+A tuple used in a Boolean context is considered true if it is non-empty.
 
 
 ### Dictionaries
@@ -994,6 +996,8 @@ are implemented using hash tables, so keys must be hashable.  Hashable
 values include `None`, Booleans, numbers, strings, and bytes, and tuples
 composed from hashable values.  Most mutable values, such as lists,
 dictionaries, and sets, are not hashable, unless they are frozen.
+<!-- Refine those semantics -- consider making even frozen
+lists/dicts/sets unhashable. -->
 Attempting to use a non-hashable value as a key in a dictionary
 results in a dynamic error.
 
@@ -1019,7 +1023,6 @@ coins["dime"]           # 10
 coins["silver dollar"]  # error: key not found
 ```
 
-The number of items in a dictionary `d` is given by `len(d)`.
 A key/value item may be added to a dictionary, or updated if the key
 is already present, by using `d[k]` on the left side of an assignment:
 
@@ -1041,12 +1044,10 @@ words = ["able", "baker", "charlie"]
 {x: len(x) for x in words}	# {"charlie": 7, "baker": 5, "able": 4}
 ```
 
-Dictionaries are iterable sequences, so they may be used as the
-operand of a `for`-loop, a list comprehension, or various built-in
-functions.
-Iteration yields the dictionary's keys in the order in which they were
-inserted; updating the value associated with an existing key does not
-affect the iteration order.
+Dictionaries are a subtype of `Mapping`. `len()` returns the number of
+entries. Iteration yields the keys in the order that they were inserted;
+updating the value associated with an existing key does not affect the
+iteration order.
 
 ```python
 x = dict([("a", 1), ("b", 2)])          # {"a": 1, "b": 2}
@@ -1100,7 +1101,7 @@ A dictionary value has these methods:
 
 ### Sets
 
-A set is a mutable, iterable collection of unique values - the set's *elements*.
+A set is a mutable collection of unique values - the set's *elements*.
 The [type](#type) of a set is `"set"`.
 
 Sets provide constant-time operations to insert, remove, or check for the
@@ -1111,7 +1112,7 @@ used as a key of a dictionary.
 
 Sets may be constructed using the [set()](#set) built-in function, which returns
 a set containing all the elements of its optional argument, which must be an
-iterable sequence. Calling `set()` without an argument constructs an empty set.
+iterable. Calling `set()` without an argument constructs an empty set.
 Sets have no literal syntax.
 
 The `in` and `not in` operations check whether a value is (or is not) in a set:
@@ -1122,16 +1123,16 @@ s = set(["a", "b", "c"])
 "z" in s  # False
 ```
 
-A set is an iterable sequence, and thus may be used as the operand of a `for`
-loop, a list comprehension, and the various built-in functions that operate on
-sequences. Its length can be retrieved using the [len()](#len) built-in
-function, and the order of iteration is the order in which elements were first
-added to the set:
+A set is a subtype of `Collection`. Its size can be retrieved using the
+[len()](#len) built-in function, and the order of iteration is the order in
+which elements were inserted. (Attempting to add an element that is already
+present is a no-op, and does not change the iteration order.)
 
 ```python
 s = set(["z", "y", "z", "y"])
 len(s)       # prints 2
 s.add("x")
+s.add("z")
 len(s)       # prints 3
 for e in s:
     print e  # prints "z", "y", "x"
@@ -1468,8 +1469,8 @@ Except where noted, built-in functions accept only positional arguments.
 After a Starlark file is parsed, but before its execution begins, the
 Starlark interpreter checks statically that the program is well formed.
 For example, `break` and `continue` statements may appear only within
-a loop; `if`, `for`, and `return` statements may appear only within a
-function; and `load` statements may appear only outside any function.
+a `for` statement; `if`, `for`, and `return` statements may appear only
+within a function; and `load` statements may appear only outside any function.
 
 _Name resolution_ is the static checking process that
 resolves names to variable bindings.
@@ -1485,7 +1486,7 @@ Four Starlark constructs bind names, as illustrated in the example below:
 function parameters (`d`),
 and assignments (`e`, `h`, including the augmented assignment `e += h`).
 Variables may be assigned or re-assigned explicitly (`e`, `h`), or implicitly, as
-in a `for`-loop (`f`) or comprehension (`g`, `i`).
+in a `for` statement (`f`) or comprehension `for` clause (`g`, `i`).
 
 ```python
 load("lib.star", "a", b="B")
@@ -1741,6 +1742,7 @@ which are all immutable, are hashable.
 
 Values of mutable types such as `list` and `dict` are not
 hashable, unless they have become immutable due to _freezing_.
+<!-- Consider changing this so that these are unconditionally unhashable. -->
 
 A `tuple` value is hashable only if all its elements are hashable.
 Thus `("localhost", 80)` is hashable but `([127, 0, 0, 1], 80)` is not.
@@ -1754,45 +1756,62 @@ so their hash values are derived from their identity.
 
 ### Collection types
 
-Many Starlark data types represent a _collection_ of values: lists
-and tuples are collections of arbitrary values, and in many
-contexts dictionaries act like a collection of their keys.
+Starlark defines several abstract data types. Although these are not directly
+referenced by name in Starlark programs, they are useful concepts for
+understanding what operations a type supports and for documenting what types a
+function expects.
+<!-- Not referenced by name until we have type annotations, at which point they
+are type names. -->
 
-We can classify different kinds of collection types based on the
-operations they support.
+* `Collection`: A type that is:
+  * *iterable* (can appear on the right-hand side of a `for` loop, whether that
+    be a `for` statement or comprehension `for` clause),
+  * can have its length taken via the `len()` function, and
+  * supports testing for membership via the `in` operator.
 
-* `Collection`: a data structure of a defined length that contains multiple elements.
-  Element membership can be tested using the `in` operator.
-  Elements can be processed in a `for` loop or comprehension.
-  Examples: `list`, `tuple`, `set`, `dict` (elements are keys), but not `string` or `bytes`.
-* `Sequence`: a collection, where its elements that can be accessed with an integer index.
-  Examples: `list`, `tuple`, `bytes`, but not `string`, `dict` or `set`.
-* `Mapping`: a collection of keys associated to values. Values are identified
-  and indexed by keys, that are not necessarily an integer. Example: `dict`.
+  Examples include `list`, `tuple`, `set`, and `dict` (its elements are its
+  keys), but not `string` or `bytes` since they are not iterable.
 
-Strings and bytes values are not iterable, though they do support the `len(s)` and
-`s[i]` operations. Starlark deviates from Python here to avoid a common
-pitfall in which a string is used by mistake where a list containing a
-single string was intended, resulting in its interpretation as a sequence
-of letters.
+* `Sequence`: A `Collection` that additionally supports subscript and slicing
+  expressions, following the semantics of indexing. `list` and `tuple` are
+  `Sequence`s, but not `set` or `dict`.
 
-Most Starlark operators and built-in functions that need a sequence
-of values will accept any iterable.
+* `Mapping`: A `Collection` of keys associated with values, where a value can
+  be retrieved by subscripting with the key. `dict` is the only example of a
+  `Mapping` in the core language.
 
-It is a dynamic error to mutate a sequence such as a list or a
-dictionary while iterating over it.
+Applications may define additional data structures that may or may not have a
+particular abstract data type. If it does have the type, it must support all of
+its required operations, but the converse is not necessarily true.
+
+### Iteration
+
+It is a dynamic error to mutate a collection such as a list, set, or dictionary
+while iterating over it. This helps avoid a common source of errors and
+implementation pitfalls. For example, the following code snippet is
+syntactically valid in both Python and Starlark:
 
 ```python
-def increment_values(dict):
-  for k in dict:
-    dict[k] += 1			# error: cannot insert into hash table during iteration
-
-dict = {"one": 1, "two": 2}
-increment_values(dict)
+a = [5, 11, 12, 13, 8]
+for x in a:
+    if x > 10:
+        a.remove(x)
 ```
 
+In Python, the result is `[5, 12, 8]` -- the `12` is missed due to the implicit
+iterator's internal integer indexing. <!-- Yes, I had fun with that aliteration.
+No, I have no shame. --> But in Starlark, an error is raised at the attempt to
+mutate `a` inside the loop. The same code would succeed with the correct result
+in both languages if the loop were rewritten as `for x in list(a)`.
+
+Unlike Python 3, the result of certain methods like `enumerate()` or `zip()` is
+a new list rather than an iterator object. Loops over such lists will not
+prevent modifying the original list.
 
 ### Indexing
+
+<!-- This section seems largely redundant with the description in the
+"Subscript expressions" section. TODO: De-duplicate. -->
 
 Many Starlark operators and functions require an index operand `i`,
 such as `a[i]` or `list.insert(i, x)`. Others require two indices `i`
@@ -1960,7 +1979,7 @@ for x in 1, 2:
 ```
 
 Starlark (like Python 3) does not accept an unparenthesized tuple
-or lambda expression as the operand of a `for`-clause in a comprehension:
+or lambda expression as the operand of a `for` clause in a comprehension:
 
 ```python
 [2*x for x in 1, 2, 3]	       	# parse error: unexpected ','
@@ -2471,7 +2490,7 @@ and its result is a dictionary containing the key/value pairs
 for which the body expression was evaluated.
 Evaluation fails if the value of any key is unhashable.
 
-As with a `for` loop, the loop variables may exploit compound
+As with a `for` statement, the loop variables may exploit compound
 assignment:
 
 ```python
@@ -2612,7 +2631,7 @@ It is a dynamic error to attempt to update an element of an immutable
 type, such as a tuple or string, or a frozen value of a mutable type.
 
 Starlark does not have a `del` statement like Python. Deleting the value
-associated with an index or key requires calling a method on the container
+associated with an index or key requires calling a method on the containing
 object.
 
 ### Slice expressions
@@ -2791,7 +2810,7 @@ a, b = 2, 3
 ```
 
 The same process for assigning a value to a target expression is used
-in `for` loops and in comprehensions.
+in `for` statements and in comprehension `for` clauses.
 
 
 ### Augmented assignments
@@ -3023,10 +3042,10 @@ else:
 An `if` statement is permitted only within a function definition.
 An `if` statement at top level results in a static error.
 
-### For loops
+### For statements
 
-A `for` loop evaluates its operand, which must be an iterable value.
-Then, for each element of the iterable's sequence, the loop assigns
+A `for` statement evaluates its operand, which must be an iterable value.
+Then, for each element of the iterable, the loop assigns
 the successive element values to one or more variables and executes a
 list of statements, the _loop body_.
 
@@ -3050,7 +3069,8 @@ for a, i in [["a", 1], ["b", 2], ["c", 3]]:
   print(a, i)                          # prints "a 1", "b 2", "c 3"
 ```
 
-Because Starlark loops always iterate over a finite sequence, they are
+Because Starlark loops always iterate over a finite iterable (assuming
+the host application does not define an unbounded type), they are
 guaranteed to terminate, unlike loops in most languages which can
 execute an arbitrary and perhaps unbounded number of iterations.
 
@@ -3058,14 +3078,14 @@ Within the body of a `for` loop, `break` and `continue` statements may
 be used to stop the execution of the loop or advance to the next
 iteration.
 
-In Starlark, a `for` loop is permitted only within a function definition.
-A `for` loop at top level results in a static error.
+In Starlark, a `for` statement is permitted only within a function
+definition. A `for` statement at top level results in a static error.
 
 
 ### Break and Continue
 
 The `break` and `continue` statements terminate the current iteration
-of a `for` loop.  Whereas the `continue` statement resumes the loop at
+of a `for` statement.  Whereas the `continue` statement resumes the loop at
 the next iteration, a `break` statement terminates the entire loop.
 
 ```text
@@ -3143,8 +3163,8 @@ When a Starlark file is executed, whether directly by the application
 or indirectly through a `load` statement, a new Starlark thread is
 created, and this thread executes all the top-level statements in the
 file.
-Because if-statements and for-loops cannot appear outside of a function,
-control flows from top to bottom.
+Because `if` statements and `for` statements cannot appear outside of a
+function, control flows from top to bottom.
 
 If execution reaches the end of the file, module initialization is
 successful.
@@ -3208,13 +3228,13 @@ The parameter names serve merely as documentation.
 
 ### any
 
-`any(x)` returns `True` if any element of the iterable sequence x is true.
-If the iterable is empty, it returns `False`.
+`any(x)` returns `True` if any element of the collection `x` is true.
+If the collection is empty, it returns `False`.
 
 ### all
 
-`all(x)` returns `False` if any element of the iterable sequence x is false.
-If the iterable is empty, it returns `True`.
+`all(x)` returns `False` if any element of the collection `x` is false.
+If the collection is empty, it returns `True`.
 
 ### bool
 
@@ -3232,7 +3252,7 @@ the UTF-8 encoding of the string. Each element of the string that is
 not part of a valid encoding of a code point is replaced by the
 UTF-8 encoding of the replacement character, U+FFFD.
 
-If x is an iterable sequence of int values,
+If x is an iterable of int values,
 the result is a `bytes` whose elements are those integers.
 It is an error if any element is not in the range 0-255.
 
@@ -3288,9 +3308,10 @@ x.f = y
 
 ### enumerate
 
-`enumerate(x)` returns a list of (index, value) pairs, each containing
-successive values of the iterable sequence xand the index of the value
-within the sequence.
+`enumerate(x)` returns a list consisting of pairs `(i, v)`, where each
+successive `v` is the next item of collection `x`, and where `i` starts at 0
+and is incremented sequentially. (For sequences, `i` is the index of `v` in
+`x`, but `enumerate()` can be used on non-sequence collections too.)
 
 The optional second parameter, `start`, specifies an integer value to
 add to each index.
@@ -3427,26 +3448,27 @@ int("0x1234")      # error (invalid base 10 number)
 
 `len(x)` returns the number of elements in its argument.
 
-It is a dynamic error if its argument is not a collection or a string.
+It is a dynamic error if its argument is not a collection, string, or bytes.
+(Applications may define additional types acceptable to `len()`.)
 
 ### list
 
 `list` constructs a list.
 
-`list(x)` returns a new list containing the elements of the
-iterable sequence x.
+`list(x)` returns a new list containing the elements of the iterable `x`.
 
 With no argument, `list()` returns a new empty list.
 
 ### max
 
-`max(x)` returns the greatest element in the iterable sequence x.
+`max(x)` returns the greatest element in the collection `x`.
 
 It is an error if any element does not support ordered comparison,
-or if the sequence is empty.
+or if the collection is empty.
 
 The optional named parameter `key` specifies a function to be applied
-to each element prior to comparison.
+to each element, whose result is used for the comparison in place of
+the element.
 
 ```python
 max([3, 1, 4, 1, 5, 9])                         # 9
@@ -3456,13 +3478,14 @@ max("two", "three", "four", key=len)            # "three", the longest
 
 ### min
 
-`min(x)` returns the least element in the iterable sequence x.
+`min(x)` returns the least element in the collection `x`.
 
 It is an error if any element does not support ordered comparison,
-or if the sequence is empty.
+or if the collection is empty.
 
 The optional named parameter `key` specifies a function to be applied
-to each element prior to comparison.
+to each element, whose result is used for the comparison in place of
+the element.
 
 ```python
 min([3, 1, 4, 1, 5, 9])                         # 1
@@ -3560,7 +3583,11 @@ repr("🙂"[:1])		# "\xf0" (UTF-8) or "\ud83d" (UTF-16)
 
 ### reversed
 
-`reversed(x)` returns a new list containing the elements of the iterable sequence x in reverse order.
+`reversed(x)` returns a new list containing the elements of the collection `x`
+in reverse order.
+
+<!-- We implicitly allow taking reversed(set([1,2,3])), even though Python
+does not. Should this be clawed back? -->
 
 ```python
 reversed(range(5))                              # [4, 3, 2, 1, 0]
@@ -3570,7 +3597,7 @@ reversed({"one": 1, "two": 2}.keys())           # ["two", "one"]
 ### set
 
 `set(x)` returns a new set containing the unique elements of the iterable
-sequence `x` in iteration order.
+`x` in iteration order.
 
 `set(x)` fails if any element of `x` is unhashable.
 
@@ -3584,8 +3611,9 @@ set({"k1": "v1", "k2": "v2"})  # set(["k1", "k2"]), a set of two elements
 
 ### sorted
 
-`sorted(x)` returns a new list containing the elements of the iterable sequence x,
-in sorted order.  The sort algorithm is stable.
+`sorted(x)` returns a new list containing the elements of the collection x,
+in sorted order.  The sort algorithm is stable, i.e., equal elements appear
+in the same relative order in the result.
 
 The optional named boolean parameter `reverse`, if true, causes `sorted` to
 return results in reverse sorted order.
@@ -3625,7 +3653,7 @@ UTF-K encoding of the replacement character, U+FFFD.
 
 ### tuple
 
-`tuple(x)` returns a tuple containing the elements of the iterable x.
+`tuple(x)` returns a tuple containing the elements of the iterable `x`.
 
 With no arguments, `tuple()` returns the empty tuple.
 
@@ -3642,11 +3670,11 @@ type(0.0)               # "float"
 ### zip
 
 `zip()` returns a new list of n-tuples formed from corresponding
-elements of each of the n iterable sequences provided as arguments to
+elements of each of the n collections provided as arguments to
 `zip`.  That is, the first tuple contains the first element of each of
-the sequences, the second element contains the second element of each
-of the sequences, and so on.  The result list is only as long as the
-shortest of the input sequences.
+the collections, the second element contains the second element of each
+of the collections, and so on.  The result list is only as long as the
+shortest of the input collections.
 
 ```python
 zip()                                   # []
@@ -3780,7 +3808,7 @@ x                                       # {"one": 1, "two": 2, "three": 3, "four
 <a id='dict·update'></a>
 ### dict·update
 
-`D.update([pairs][, name=value[, ...])` makes a sequence of key/value
+`D.update([pairs][, name=value[, ...])` makes a series of key/value
 insertions into dictionary D, then returns `None.`
 
 If the positional argument `pairs` is present, it must be `None`,
@@ -3967,11 +3995,11 @@ the [`|=`](#sets) augmented assignment operation.
 ### set·difference
 
 `S.difference(*others)` returns a new set containing elements found in the set
-`S` but not found in any of the iterable sequences `*others`.
+`S` but not found in any of the collections `*others`.
 
 If `s` and `t` are sets, `s.difference(t)` is equivalent to `s - t`; however,
 note that the `-` operation requires both sides to be sets, while the
-`difference` method accepts arbitrary iterable sequences.
+`difference` method accepts arbitrary collections.
 
 It is permissible to call `difference` without any arguments; this returns a
 copy of the set `S`.
@@ -3988,11 +4016,11 @@ set([1, 2, 3]).difference([0, 1], [3, 4])  # set([2])
 ### set·difference\_update
 
 `S.difference_update(*others)` removes from the set `S` any elements found in
-any of the iterable sequences `*others`. It returns `None`.
+any of the collections `*others`. It returns `None`.
 
 If `s` and `t` are sets, `s.difference_update(t)` is equivalent to `s -= t`;
 however, note that the `-=` augmented assignment requires both sides to be sets,
-while the `difference_update` method accepts arbitrary iterable sequences.
+while the `difference_update` method accepts arbitrary collections.
 
 It is permissible to call `difference_update` without any arguments; this leaves
 the set `S` unchanged.
@@ -4033,11 +4061,11 @@ s.discard("y")  # None; s == set(["x"])
 ### set·intersection
 
 `S.intersection(*others)` returns a new set containing those elements that the
-set `S` and all of the iterable sequences `*others` have in common.
+set `S` and all of the collections `*others` have in common.
 
 If `s` and `t` are sets, `s.intersection(t)` is equivalent to `s & t`; however,
 note that the `&` operation requires both sides to be sets, while the
-`intersection` method accepts arbitrary iterable sequences.
+`intersection` method accepts arbitrary collections.
 
 It is permissible to call `intersection` without any arguments; this returns a
 copy of the set `S`.
@@ -4054,11 +4082,11 @@ set([1, 2, 3]).intersection([0, 1], [1, 2])  # set([1])
 ### set·intersection\_update
 
 `S.intersection_update(*others)` removes from the set `S` any elements not found
-in at least one of the iterable sequences `*others`. It returns `None`.
+in at least one of the collections `*others`. It returns `None`.
 
 If `s` and `t` are sets, `s.intersection_update(t)` is equivalent to `s &= t`;
 however, note that the `&=` augmented assignment requires both sides to be sets,
-while the `intersection_update` method accepts arbitrary iterable sequences.
+while the `intersection_update` method accepts arbitrary collections.
 
 It is permissible to call `intersection_update` without any arguments; this
 leaves the set `S` unchanged.
@@ -4076,7 +4104,7 @@ s.intersection_update([0, 1], [1, 2])  # None; s is set([1])
 
 ### set·isdisjoint
 
-`S.isdisjoint(x)` returns `True` if the set `S` and the iterable sequence `x` do
+`S.isdisjoint(x)` returns `True` if the set `S` and the collection `x` do
 not have any values in common, and `False` otherwise.
 
 This is equivalent to `not S.intersection(x)`.
@@ -4088,7 +4116,7 @@ This is equivalent to `not S.intersection(x)`.
 ### set·issubset
 
 `S.issubset(x)` returns `True` if every element of the set `S` is present in the
-iterable sequence `x`, and `False` otherwise.
+collection `x`, and `False` otherwise.
 
 This is equivalent to `not S.difference(x)`.
 
@@ -4098,7 +4126,7 @@ This is equivalent to `not S.difference(x)`.
 
 ### set·issuperset
 
-`S.issuperset(x)` returns `True` if every element of the iterable sequence `x`
+`S.issuperset(x)` returns `True` if every element of the collection `x`
 is present in the set `S`, and `False` otherwise.
 
 This is equivalent to `S == S.union(x)`.
@@ -4146,12 +4174,12 @@ s.remove(2)  # error: element not found
 ### set·symmetric\_difference
 
 `S.symmetric_difference(x)` returns a new set containing elements found only in
-the set `S` or in the iterable sequence `x` but not those found in both `S` and
+the set `S` or in the collection `x` but not those found in both `S` and
 `x`.
 
 If `s` and `t` are sets, `s.symmetric_difference(t)` is equivalent to `s ^ t`;
 however, note that the `^` operation requires both sides to be sets, while the
-`symmetric_difference` method accepts an arbitrary iterable sequence.
+`symmetric_difference` method accepts an arbitrary collection.
 
 `symmetric_difference` fails if any element of `x` is unhashable.
 
@@ -4164,13 +4192,13 @@ set([1, 2]).symmetric_difference([2, 3])  # set([1, 3])
 ### set·symmetric\_difference\_update
 
 `S.symmetric_difference_update(x)` removes from the set `S` any elements found
-in both `S` and the iterable sequence `x`, and adds to `S` any elements found in
+in both `S` and the collection `x`, and adds to `S` any elements found in
 `x` but not in `S`. It returns `None`.
 
 If `s` and `t` are sets, `s.symmetric_difference_update(t)` is equivalent to `s
 ^= t`; however, note that the `^=` augmented assignment requires both sides to
 be sets, while the `symmetric_difference_update` method accepts an arbitrary
-iterable sequence.
+collection.
 
 `symmetric_difference_update` fails if the set `S` is frozen or has active
 iterators, or if any element of `x` is unhashable.
@@ -4185,11 +4213,11 @@ s.symmetric_difference_update([2, 3])  # None; s == set([1, 3])
 ### set·union
 
 `S.union(*others)` returns a new set containing elements found in the set `S` or
-in any of the iterable sequences `*others`.
+in any of the collections `*others`.
 
 If `s` and `t` are sets, `s.union(t)` is equivalent to `s | t`; however, note
 that the `|` operation requires both sides to be sets, while the `union` method
-accepts arbitrary iterable sequences.
+accepts arbitrary collections.
 
 It is permissible to call `union` without any arguments; this returns a copy of
 the set `S`.
@@ -4206,11 +4234,11 @@ set([1, 2]).union([2, 3], {3: "a", 4: "b"})  # set([1, 2, 3, 4])
 ### set·update
 
 `S.update(*others)` adds to the set `S` any elements found in any of the
-iterable sequences `*others`. It returns `None`.
+collections `*others`. It returns `None`.
 
 If `s` and `t` are sets, `s.update(t)` is equivalent to `s |= t`; however, note
 that the `|=` augmented assignment requires both sides to be sets, while the
-`update` method accepts arbitrary iterable sequences.
+`update` method accepts arbitrary collections.
 
 It is permissible to call `update` without any arguments; this leaves the set
 `S` unchanged.
